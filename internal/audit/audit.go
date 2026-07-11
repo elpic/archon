@@ -24,16 +24,25 @@ func NewRunner(resolver *standards.Resolver, llmProvider llm.Provider) *Runner {
 // Run executes the audit and returns a Report. The Report's Format method
 // renders it to a human-readable string; callers may also inspect the
 // structured violations before formatting.
+//
+// The returned Report carries the resolved StandardsSource so downstream
+// tooling (and the human reader) can see whether the project file was
+// used directly or whether standards were inherited from an org or
+// fallback repo.
 func (r *Runner) Run(ctx context.Context, target string) (*Report, error) {
-	docs, err := r.resolver.Resolve(ctx, target)
+	doc, err := r.resolver.Resolve(ctx, target)
 	if err != nil {
 		return nil, fmt.Errorf("resolve standards: %w", err)
 	}
 
-	violations, err := r.llmProvider.Audit(ctx, []byte(docs.Body), target)
+	violations, err := r.llmProvider.Audit(ctx, []byte(doc.Body), target)
 	if err != nil {
 		return nil, fmt.Errorf("llm audit: %w", err)
 	}
 
-	return &Report{Target: target, Violations: violations}, nil
+	return &Report{
+		Target:          target,
+		Violations:      violations,
+		StandardsSource: doc.Source,
+	}, nil
 }

@@ -16,6 +16,9 @@ func TestReport_Format_NoViolations(t *testing.T) {
 	if !strings.Contains(got, "./...") {
 		t.Errorf("expected target in output, got: %q", got)
 	}
+	if strings.Contains(got, "Standards:") {
+		t.Errorf("expected no 'Standards:' line when source is empty, got: %q", got)
+	}
 }
 
 func TestReport_Format_WithViolations(t *testing.T) {
@@ -34,5 +37,46 @@ func TestReport_Format_WithViolations(t *testing.T) {
 	}
 	if !strings.Contains(got, "error") {
 		t.Errorf("expected severity in output, got: %q", got)
+	}
+}
+
+func TestReport_Format_WithStandardsSource(t *testing.T) {
+	cases := []struct {
+		name    string
+		report  Report
+		wantSub string
+	}{
+		{
+			name: "source only, no violations",
+			report: Report{
+				Target:          "./...",
+				StandardsSource: "github.com/elpic/go-standards@abc123",
+			},
+			wantSub: "Standards: github.com/elpic/go-standards@abc123",
+		},
+		{
+			name: "source and violations",
+			report: Report{
+				Target:          "./...",
+				StandardsSource: "github.com/elpic/go-standards@abc123",
+				Violations: []llm.Violation{
+					{Rule: "r1", Description: "d1", Severity: llm.SeverityWarn},
+				},
+			},
+			wantSub: "Standards: github.com/elpic/go-standards@abc123",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.report.Format()
+			if !strings.Contains(got, tc.wantSub) {
+				t.Errorf("expected %q in output, got: %q", tc.wantSub, got)
+			}
+			// The Standards line must come before any violation list.
+			idx := strings.Index(got, "Standards:")
+			if idx != 0 {
+				t.Errorf("expected 'Standards:' at start of output, got idx=%d: %q", idx, got)
+			}
+		})
 	}
 }
