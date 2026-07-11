@@ -6,19 +6,67 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Provider drives an audit pass against a project directory using the
 // resolved standards Document as the rubric.
+//
+// If changedFiles is non-empty, the provider should only audit those
+// files (relative to the target directory).
 type Provider interface {
-	Audit(ctx context.Context, standardsBody []byte, target string) ([]Violation, error)
+	Audit(ctx context.Context, standardsBody []byte, target string, changedFiles []string) ([]Violation, error)
 }
 
 // Violation is a single standards deviation found by the LLM provider.
+//
+// Source coordinates (File / Line / Column) are populated when the
+// provider can locate the offending code; they are zero-valued
+// otherwise. The string representations rendered by String() use
+// "? for any unset coordinate so the output stays a single line
+// consumable by editor problem-matchers.
 type Violation struct {
 	Rule        string
 	Description string
 	Severity    Severity
+	File        string
+	Line        int
+	Column      int
+}
+
+// String renders the violation in the "problem-matcher" format used by
+// the watch subcommand:
+//
+//	path:line:col: [severity] message
+//
+// Missing coordinates are rendered as "?" rather than the zero value
+// (":0:0" would mislead readers into thinking line 0 / column 0 is
+// meaningful). Callers that want richer rendering (the audit
+// subcommand's terminal layout) should use Report.Format() instead.
+func (v Violation) String() string {
+	path := v.File
+	if path == "" {
+		path = "?"
+	}
+	line := "?"
+	if v.Line > 0 {
+		line = fmt.Sprintf("%d", v.Line)
+	}
+	col := "?"
+	if v.Column > 0 {
+		col = fmt.Sprintf("%d", v.Column)
+	}
+	var b strings.Builder
+	b.WriteString(path)
+	b.WriteByte(':')
+	b.WriteString(line)
+	b.WriteByte(':')
+	b.WriteString(col)
+	b.WriteString(": [")
+	b.WriteString(v.Severity.String())
+	b.WriteString("] ")
+	b.WriteString(v.Description)
+	return b.String()
 }
 
 // Severity ranks how strongly a rule was violated.
