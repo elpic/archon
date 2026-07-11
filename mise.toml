@@ -3,16 +3,42 @@ go = "1.25.12"
 "go:golang.org/x/vuln/cmd/govulncheck" = "v1.6.0"
 
 [tasks.lint]
+description = "Run go vet for static analysis"
 run = "go vet ./..."
 
 [tasks.build]
+description = "Build the archon binary to ./archon-bin"
 run = "go build -o archon-bin ./cmd/archon"
 
 [tasks."test:coverage"]
+description = "Run all tests with coverage profiling"
 run = "go test ./... -coverprofile=coverage.out"
 
 [tasks."test:integration"]
+description = "Run integration tests (hits real GitHub API)"
 run = "go test ./... -tags=integration"
 
 [tasks.security]
+description = "Run govulncheck for vulnerability scanning"
 run = "govulncheck ./..."
+
+# Archon CLI helpers
+[tasks.watch]
+description = "Start file-watching audit loop (Ctrl-C to stop)"
+run = "go run ./cmd/archon watch --target ."
+
+[tasks.audit]
+description = "Run a single audit pass on the target project"
+run = "go run ./cmd/archon audit --target ."
+
+[tasks.init]
+description = "Scaffold .archon/standards.md in the target project"
+run = "go run ./cmd/archon init --target ."
+
+[tasks.init-from]
+description = "Scaffold .archon/standards.md inheriting from an org repo (args: org/repo [target])"
+run = "go run ./cmd/archon init --from {{args.0}} --target {{args.1}}"
+
+[tasks.help]
+description = "Show CLI help"
+run = "go run ./cmd/archon help"
