@@ -12,9 +12,18 @@
 # no force-push, no deletion). SHA-pinning is not supported in this
 # Blueprint fork's @github: shorthand (it resolves origin/<ref>, not
 # origin/<sha>).
+#
+# Deferred (must be fixed in elpic/templates, not here):
+#   - SEC-002: third-party actions pinned to mutable major-version tags
+#     (@v1, @v2, @v4, @v6) — should be SHA-pinned at the template level.
+#   - SEC-003: `actions: read` permission in integration.yml is unused.
+#   - SEC-004: `pull-requests: write` granted workflow-wide in
+#     integration.yml should be scoped to specific jobs.
+# Until the upstream template lands these fixes, the drift-check workflow
+# is the only guard against hand-edits to the rendered YAML.
 
 var APP_NAME archon
-var GO_VERSION 1.23
+var GO_VERSION 1.25.12
 
 var CHECKS [{"file":"setup.bp","template":"@github:elpic/templates@main:actions/github/integration/go","against":".github/workflows"},{"file":"setup.bp","template":"@github:elpic/templates@main:actions/github/drift-check","against":".github/workflows"}]
 
