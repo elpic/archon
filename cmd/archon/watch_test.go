@@ -47,7 +47,7 @@ type watchFakeProvider struct {
 	violations []llm.Violation
 }
 
-func (f *watchFakeProvider) Audit(_ context.Context, _ []byte, _ string) ([]llm.Violation, error) {
+func (f *watchFakeProvider) Audit(_ context.Context, _ []byte, _ string, _ []string) ([]llm.Violation, error) {
 	return f.violations, nil
 }
 

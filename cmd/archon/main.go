@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/elpic/archon/internal/audit"
+	"github.com/elpic/archon/internal/git"
 	"github.com/elpic/archon/internal/llm"
 	"github.com/elpic/archon/internal/standards"
 	"github.com/elpic/archon/internal/watch"
@@ -59,6 +60,8 @@ func runAudit(ctx context.Context, args []string) error {
 	fs.SetOutput(os.Stderr)
 	fallback := fs.String("fallback", "", "fallback org/repo for standards when no project or org source is found (e.g. elpic/go-standards)")
 	target := fs.String("target", ".", "project path to audit")
+	changed := fs.Bool("changed", false, "audit only files changed since HEAD~1 (uses git diff)")
+	since := fs.String("since", "", "audit files changed since given ref (e.g. main, HEAD~3, commit SHA)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,6 +78,32 @@ func runAudit(ctx context.Context, args []string) error {
 		return fmt.Errorf("llm provider: %w", err)
 	}
 	runner := audit.NewRunner(resolver, provider)
+
+	var changedFiles []string
+	if *changed {
+		files, err := git.ChangedFiles(ctx, git.DiffOptions{
+			Target:      *target,
+			ChangedOnly: true,
+		})
+		if err != nil {
+			return fmt.Errorf("get changed files: %w", err)
+		}
+		changedFiles = files
+	} else if *since != "" {
+		files, err := git.ChangedFiles(ctx, git.DiffOptions{
+			Target: *target,
+			Since:  *since,
+		})
+		if err != nil {
+			return fmt.Errorf("get changed files: %w", err)
+		}
+		changedFiles = files
+	}
+
+	if len(changedFiles) > 0 {
+		runner = runner.WithChangedFiles(changedFiles)
+	}
+
 	report, err := runner.Run(ctx, *target)
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
@@ -210,6 +239,6 @@ type stubProvider struct {
 	err error
 }
 
-func (s *stubProvider) Audit(_ context.Context, _ []byte, _ string) ([]llm.Violation, error) {
+func (s *stubProvider) Audit(_ context.Context, _ []byte, _ string, _ []string) ([]llm.Violation, error) {
 	return nil, s.err
 }

@@ -11,8 +11,11 @@ import (
 
 // Provider drives an audit pass against a project directory using the
 // resolved standards Document as the rubric.
+//
+// If changedFiles is non-empty, the provider should only audit those
+// files (relative to the target directory).
 type Provider interface {
-	Audit(ctx context.Context, standardsBody []byte, target string) ([]Violation, error)
+	Audit(ctx context.Context, standardsBody []byte, target string, changedFiles []string) ([]Violation, error)
 }
 
 // Violation is a single standards deviation found by the LLM provider.

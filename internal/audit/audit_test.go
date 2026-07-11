@@ -34,14 +34,16 @@ type fakeProvider struct {
 	violations []llm.Violation
 	err        error
 	calledWith struct {
-		body   []byte
-		target string
+		body         []byte
+		target       string
+		changedFiles []string
 	}
 }
 
-func (f *fakeProvider) Audit(_ context.Context, body []byte, target string) ([]llm.Violation, error) {
+func (f *fakeProvider) Audit(_ context.Context, body []byte, target string, changedFiles []string) ([]llm.Violation, error) {
 	f.calledWith.body = body
 	f.calledWith.target = target
+	f.calledWith.changedFiles = changedFiles
 	return f.violations, f.err
 }
 
