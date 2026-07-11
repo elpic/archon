@@ -8,8 +8,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// orgRepoPartRe is the allow-list for an owner or repo segment.
+// GitHub allows letters, digits, single dots, underscores, and hyphens.
+// We deliberately reject `?`, `#`, `&`, `;`, ` `, and anything else
+// because those characters are reserved in URL syntax and could be
+// smuggled past parseOrgRepo to redirect a request to a different host
+// or add a query string.
+var orgRepoPartRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// ValidateOrgRepo reports whether s is a syntactically valid "owner/repo"
+// string. Exposed so the CLI (and any future callers) can reject malformed
+// values at input time rather than letting them reach the URL builder.
+func ValidateOrgRepo(s string) error {
+	_, _, err := parseOrgRepo(s)
+	return err
+}
 
 // Resolver locates and loads the standards markdown that governs a project.
 type Resolver struct {
@@ -153,15 +170,25 @@ func projectStandardsPath(target string) string {
 	return filepath.Join(target, ".archon", "standards.md")
 }
 
-// parseOrgRepo splits "owner/repo" and validates both parts are non-empty.
-// GitHub repo names cannot contain slashes, so we reject anything that
-// splits into more than two parts.
+// parseOrgRepo splits "owner/repo" and validates both parts are non-empty
+// and contain only characters allowed by orgRepoPartRe. GitHub repo names
+// cannot contain slashes, so we reject anything that splits into more
+// than two parts. The character allow-list is the primary defense against
+// URL-injection attacks (e.g. "elpic/archon?next=evil" splitting into
+// path + query).
 func parseOrgRepo(s string) (owner, repo string, err error) {
 	parts := strings.Split(s, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) != 2 {
 		return "", "", fmt.Errorf("invalid org/repo %q (expected owner/repo)", s)
 	}
-	return parts[0], parts[1], nil
+	owner, repo = parts[0], parts[1]
+	if owner == "" || repo == "" {
+		return "", "", fmt.Errorf("invalid org/repo %q (expected owner/repo)", s)
+	}
+	if !orgRepoPartRe.MatchString(owner) || !orgRepoPartRe.MatchString(repo) {
+		return "", "", fmt.Errorf("invalid org/repo %q (owner/repo must match %s)", s, orgRepoPartRe.String())
+	}
+	return owner, repo, nil
 }
 
 // parseFromHeader scans the first lines of a markdown file for a

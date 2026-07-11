@@ -20,6 +20,26 @@ type fakeFetcher struct {
 	calls []fakeCall
 }
 
+// selectiveFetcher is like fakeFetcher but returns a fixed error for
+// requests not in the responses map. This lets tests assert that the
+// resolver swallows *ErrFetch (e.g. 403), not just *ErrNotFound.
+type selectiveFetcher struct {
+	responses map[string]fakeResponse
+	fetchErr  error
+	calls     []fakeCall
+}
+
+func (f *selectiveFetcher) Fetch(_ context.Context, owner, repo, path string) ([]byte, string, error) {
+	f.calls = append(f.calls, fakeCall{owner, repo, path})
+	if r, ok := f.responses[owner+"/"+repo+"/"+path]; ok {
+		return r.body, r.sha, nil
+	}
+	if f.fetchErr != nil {
+		return nil, "", f.fetchErr
+	}
+	return nil, "", &ErrNotFound{Owner: owner, Repo: repo, Path: path}
+}
+
 type fakeResponse struct {
 	body []byte
 	sha  string
@@ -129,13 +149,40 @@ func TestParseOrgRepo(t *testing.T) {
 		wantRepo  string
 		wantError bool
 	}{
+		// Accepted.
 		{"a/b", "a", "b", false},
 		{"elpic/go-standards", "elpic", "go-standards", false},
-		{"a/b/c", "", "", true}, // GitHub repo names cannot contain slashes
-		{"", "", "", true},
-		{"/b", "", "", true},
-		{"a/", "", "", true},
-		{"a", "", "", true},
+		{"my-org/my.repo", "my-org", "my.repo", false},
+		{"owner_name/repo_name", "owner_name", "repo_name", false},
+
+		// Rejected: shape.
+		{"a/b/c", "", "", true},  // GitHub repo names cannot contain slashes
+		{"", "", "", true},       // empty input
+		{"/b", "", "", true},     // empty owner
+		{"a/", "", "", true},     // empty repo
+		{"a", "", "", true},      // no slash
+
+		// Rejected: SEC-002 — reserved URL characters that could be
+		// smuggled past the parser and reinterpreted by the URL layer.
+		// (The old fmt.Sprintf-based URL builder would let a '?' here
+		// become the start of the query string.)
+		{"a?x=1/b", "", "", true},    // '?' in owner
+		{"a/b?x=1", "", "", true},    // '?' in repo
+		{"a/b#frag", "", "", true},   // '#' in repo
+		{"a b/c", "", "", true},      // space in owner
+		{"a/b c", "", "", true},      // space in repo
+		{"a&b/c", "", "", true},      // '&' in owner
+		{"a/b&c", "", "", true},      // '&' in repo
+		{"a;b/c", "", "", true},      // ';' in owner
+		{"a/b;c", "", "", true},      // ';' in repo
+		{"a%2Fb/c", "", "", true},    // pre-encoded slash
+		{"a/b%2Fc", "", "", true},    // pre-encoded slash
+		{"a:b/c", "", "", true},      // ':' in owner (URL authority delimiter)
+		{"a/b@host", "", "", true},   // '@' in repo (URL userinfo delimiter)
+
+		// The exact SEC-002 regression: a 'from:' header that looks like
+		// a clean owner/repo but is actually a query injection.
+		{"elpic/archon?next=evil", "", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -151,6 +198,32 @@ func TestParseOrgRepo(t *testing.T) {
 			}
 			if owner != tc.wantOwn || repo != tc.wantRepo {
 				t.Errorf("got (%q,%q), want (%q,%q)", owner, repo, tc.wantOwn, tc.wantRepo)
+			}
+		})
+	}
+}
+
+// TestValidateOrgRepo: the public validator must agree with parseOrgRepo
+// and reject the same inputs.
+func TestValidateOrgRepo(t *testing.T) {
+	for _, in := range []string{
+		"a/b", "elpic/go-standards", "my-org/my.repo", "owner_name/repo_name",
+		"", "/b", "a/", "a", "a/b/c",
+		"a?x=1/b", "a/b?x=1", "a/b#frag", "a b/c", "a/b c",
+		"a&b/c", "a/b&c", "a;b/c", "a/b;c",
+		"elpic/archon?next=evil",
+	} {
+		t.Run(in, func(t *testing.T) {
+			err := ValidateOrgRepo(in)
+			switch in {
+			case "a/b", "elpic/go-standards", "my-org/my.repo", "owner_name/repo_name":
+				if err != nil {
+					t.Errorf("ValidateOrgRepo(%q) = %v, want nil", in, err)
+				}
+			default:
+				if err == nil {
+					t.Errorf("ValidateOrgRepo(%q) = nil, want error", in)
+				}
 			}
 		})
 	}
@@ -456,6 +529,57 @@ func TestResolver_AutoInferFallbackToWithFallback(t *testing.T) {
 	}
 	if got := fetcher.calls[1]; got.owner != "elpic" || got.repo != "standards" {
 		t.Errorf("second call = %+v, want fallback elpic/standards", got)
+	}
+}
+
+// TestResolver_AutoInferFallbackToWithFallback_403 (QA Gap 1): a regression
+// in tier-3 fall-through that special-cased ErrNotFound would let a 403
+// (private repo) bubble up. The real httpFetcher returns ErrFetch for 403,
+// and the resolver must swallow that too. This pins the behavior: any
+// non-nil error from the auto-infer fetch is silently dropped and the
+// resolver moves on to the next tier.
+func TestResolver_AutoInferFallbackToWithFallback_403(t *testing.T) {
+	unsetEnv(t, "GITHUB_REPOSITORY")
+	t.Setenv("GITHUB_REPOSITORY", "elpic/testing")
+
+	dir := t.TempDir()
+	// 403 → ErrFetch (the way the real httpFetcher surfaces it). We cannot
+	// use the default fakeFetcher here because its miss path returns
+	// ErrNotFound. Build a fetcher that returns ErrFetch for the auto-infer
+	// target and a successful response for the fallback.
+	fetcher := &selectiveFetcher{
+		responses: map[string]fakeResponse{
+			"elpic/standards/.archon/standards.md": {body: []byte("FB"), sha: "fbsha"},
+		},
+		fetchErr: &ErrFetch{
+			URL: "https://api.github.com/repos/elpic/.archon/contents/.archon/standards.md",
+			Err: errors.New("status 403: Not Found"),
+		},
+	}
+	r, err := NewResolver(".", WithFetcher(fetcher), WithFallback("elpic/standards"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := r.Resolve(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if doc.Source != "github.com/elpic/standards@fbsha" {
+		t.Errorf("Source = %q, want github.com/elpic/standards@fbsha", doc.Source)
+	}
+	if doc.Body != "FB" {
+		t.Errorf("Body = %q, want FB", doc.Body)
+	}
+	// Tier 3 was attempted, then tier 4.
+	if got := fetcher.calls[0]; got.owner != "elpic" || got.repo != ".archon" {
+		t.Errorf("first call = %+v, want auto-infer elpic/.archon", got)
+	}
+	if got := fetcher.calls[1]; got.owner != "elpic" || got.repo != "standards" {
+		t.Errorf("second call = %+v, want fallback elpic/standards", got)
+	}
+	if len(fetcher.calls) != 2 {
+		t.Errorf("expected exactly 2 fetcher calls, got %d: %+v", len(fetcher.calls), fetcher.calls)
 	}
 }
 

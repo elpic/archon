@@ -30,17 +30,22 @@ func inferOrgRepo(target string) string {
 	return ""
 }
 
-// ownerFromGHRepository extracts the owner from a "owner/repo" string.
-// Returns ok=false for empty input, missing slash, or empty parts.
+// ownerFromGHRepository extracts the owner from a "owner/repo" string
+// (the value of the GITHUB_REPOSITORY env var, set by GitHub Actions).
+// Returns ok=false for empty input, missing slash, too many slashes,
+// or empty parts — i.e. for anything that is not a clean two-segment
+// "owner/repo". We intentionally do not apply the URL-character
+// allow-list here (the GITHUB_REPOSITORY value is environment-controlled,
+// not user-controlled); we only require the shape.
 func ownerFromGHRepository(s string) (string, bool) {
 	if s == "" {
 		return "", false
 	}
-	owner, _, ok := strings.Cut(s, "/")
-	if !ok || owner == "" {
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", false
 	}
-	return owner, true
+	return parts[0], true
 }
 
 // ownerFromGitRemote shells out to `git remote get-url origin` in target

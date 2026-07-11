@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/elpic/archon/internal/standards"
 )
 
 // initCommand is split out so tests can call runInitCmd directly without
@@ -31,6 +33,20 @@ func runInit(_ context.Context, args []string) error {
 		return err
 	}
 	return runInitCmd(initCommand{target: *target, from: *from})
+}
+
+// validateFrom enforces the owner/repo shape of the --from flag at the CLI
+// boundary. Empty input is valid (means "no inheritance"). We delegate the
+// actual character allow-list to standards.ValidateOrgRepo so a value that
+// will be accepted here is guaranteed to be accepted at resolve time too.
+func validateFrom(s string) error {
+	if s == "" {
+		return nil
+	}
+	if err := standards.ValidateOrgRepo(s); err != nil {
+		return fmt.Errorf("init: --from must be in the form owner/repo, got %q", s)
+	}
+	return nil
 }
 
 // runInitCmd scaffolds .archon/standards.md in the target directory.
@@ -91,15 +107,3 @@ func renderInitHeader(from string) string {
 	return b.String()
 }
 
-// validateFrom enforces the owner/repo shape of the --from flag.
-// Empty input is valid (means "no inheritance").
-func validateFrom(s string) error {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return fmt.Errorf("init: --from must be in the form owner/repo, got %q", s)
-	}
-	return nil
-}

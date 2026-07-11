@@ -156,15 +156,31 @@ func TestValidateFrom(t *testing.T) {
 		in     string
 		wantOK bool
 	}{
+		// Accepted.
 		{"", true},
 		{"a/b", true},
 		{"elpic/go-standards", true},
 		{"a-b/c-d", true},
+		{"owner_name/repo_name", true},
+		{"my-org/my.repo", true},
+
+		// Rejected: shape.
 		{"not-a-repo", false},
 		{"/b", false},
 		{"a/", false},
 		{"/", false},
 		{"a/b/c", false}, // GitHub repo names cannot contain slashes
+
+		// Rejected: SEC-002 reserved URL characters. Same allow-list
+		// as the standards package's parseOrgRepo.
+		{"a?x=1/b", false},
+		{"a/b?x=1", false},
+		{"a/b#frag", false},
+		{"a b/c", false},
+		{"a/b c", false},
+		{"a&b/c", false},
+		{"a;b/c", false},
+		{"elpic/archon?next=evil", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -180,20 +196,42 @@ func TestValidateFrom(t *testing.T) {
 }
 
 // TestRunInit_RejectsMalformedFrom: runInit surfaces the validation error
-// instead of writing a file.
+// instead of writing a file. Use a fresh temp dir for --target so the
+// test does not depend on (or pollute) the process's CWD.
 func TestRunInit_RejectsMalformedFrom(t *testing.T) {
-	err := runInit(nil, []string{"--from", "not-a-repo"})
+	dir := t.TempDir()
+	err := runInit(nil, []string{"--from", "not-a-repo", "--target", dir})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "owner/repo") {
 		t.Errorf("expected 'owner/repo' in error, got %v", err)
 	}
-	// File must not have been created.
-	entries, _ := os.ReadDir(".")
+	// File must not have been created in the target dir.
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".archon") {
 			t.Errorf("unexpected .archon path created: %s", e.Name())
 		}
+	}
+}
+
+// TestRunInit_RejectsMalformedFrom_QueryInjection: SEC-002 regression
+// test at the CLI layer. A --from value that would have been smuggled
+// past the old validateFrom must now be rejected.
+func TestRunInit_RejectsMalformedFrom_QueryInjection(t *testing.T) {
+	dir := t.TempDir()
+	err := runInit(nil, []string{"--from", "elpic/archon?next=evil", "--target", dir})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "owner/repo") {
+		t.Errorf("expected 'owner/repo' in error, got %v", err)
+	}
+	// No .archon directory should have been created.
+	if _, err := os.Stat(filepath.Join(dir, ".archon")); err == nil {
+		t.Error("unexpected .archon directory created after rejected --from")
+	} else if !os.IsNotExist(err) {
+		t.Errorf("unexpected stat error: %v", err)
 	}
 }
