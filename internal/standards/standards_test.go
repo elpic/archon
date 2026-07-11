@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,6 +49,24 @@ func writeFile(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+}
+
+// unsetEnv removes key from the process environment for the duration of
+// the test. Go's t.Setenv can only set, not unset, so this helper handles
+// the restore-or-unset cleanup.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	oldVal, hadOld := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unsetenv %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if hadOld {
+			os.Setenv(key, oldVal)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
 }
 
 func TestParseFromHeader(t *testing.T) {
@@ -311,5 +330,193 @@ func TestNewResolver_RejectsInvalidFallback(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fallback") {
 		t.Errorf("expected 'fallback' in error, got %v", err)
+	}
+}
+
+// TestResolver_AutoInferFromGITHUB_REPOSITORY: when GITHUB_REPOSITORY is set
+// and no project file / no `from:` header exists, the resolver fetches
+// <owner>/.archon/standards.md via auto-infer.
+func TestResolver_AutoInferFromGITHUB_REPOSITORY(t *testing.T) {
+	unsetEnv(t, "GITHUB_REPOSITORY")
+	t.Setenv("GITHUB_REPOSITORY", "elpic/testing")
+
+	dir := t.TempDir()
+	fetcher := &fakeFetcher{
+		responses: map[string]fakeResponse{
+			"elpic/.archon/.archon/standards.md": {body: []byte("AUTO BODY"), sha: "autosha"},
+		},
+	}
+	r, err := NewResolver(".", WithFetcher(fetcher))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := r.Resolve(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if doc.Source != "github.com/elpic/.archon@autosha" {
+		t.Errorf("Source = %q, want github.com/elpic/.archon@autosha", doc.Source)
+	}
+	if doc.Body != "AUTO BODY" {
+		t.Errorf("Body = %q, want AUTO BODY", doc.Body)
+	}
+	if len(fetcher.calls) != 1 {
+		t.Fatalf("expected exactly 1 fetcher call, got %d: %+v", len(fetcher.calls), fetcher.calls)
+	}
+	got := fetcher.calls[0]
+	if got.owner != "elpic" || got.repo != ".archon" || got.path != ".archon/standards.md" {
+		t.Errorf("call = %+v, want elpic/.archon/.archon/standards.md", got)
+	}
+}
+
+// TestResolver_AutoInferFromGitRemote: when GITHUB_REPOSITORY is unset and
+// the target is a git repo whose `origin` remote is a GitHub URL, the
+// resolver auto-infers the owner from the remote and fetches
+// <owner>/.archon/standards.md.
+func TestResolver_AutoInferFromGitRemote(t *testing.T) {
+	unsetEnv(t, "GITHUB_REPOSITORY")
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"remote", "add", "origin", "git@github.com:AvantFinCo/card-ledger.git"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	fetcher := &fakeFetcher{
+		responses: map[string]fakeResponse{
+			"AvantFinCo/.archon/.archon/standards.md": {body: []byte("AUTO"), sha: "infersha"},
+		},
+	}
+	r, err := NewResolver(".", WithFetcher(fetcher))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := r.Resolve(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if doc.Source != "github.com/AvantFinCo/.archon@infersha" {
+		t.Errorf("Source = %q, want github.com/AvantFinCo/.archon@infersha", doc.Source)
+	}
+	if doc.Body != "AUTO" {
+		t.Errorf("Body = %q, want AUTO", doc.Body)
+	}
+}
+
+// TestResolver_AutoInferFallbackToWithFallback: when auto-infer points at an
+// org with no `.archon` repo (fetcher returns ErrNotFound), resolution must
+// fall through to the configured WithFallback rather than surfacing the
+// auto-infer miss as an error.
+func TestResolver_AutoInferFallbackToWithFallback(t *testing.T) {
+	unsetEnv(t, "GITHUB_REPOSITORY")
+	t.Setenv("GITHUB_REPOSITORY", "elpic/testing")
+
+	dir := t.TempDir()
+	fetcher := &fakeFetcher{
+		responses: map[string]fakeResponse{
+			"elpic/standards/.archon/standards.md": {body: []byte("FB"), sha: "fbsha"},
+			// No entry for "elpic/.archon/.archon/standards.md" → fakeFetcher
+			// returns ErrNotFound, which tier 3 must swallow.
+		},
+	}
+	r, err := NewResolver(".", WithFetcher(fetcher), WithFallback("elpic/standards"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := r.Resolve(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if doc.Source != "github.com/elpic/standards@fbsha" {
+		t.Errorf("Source = %q, want github.com/elpic/standards@fbsha", doc.Source)
+	}
+	if doc.Body != "FB" {
+		t.Errorf("Body = %q, want FB", doc.Body)
+	}
+	// Expect two fetcher calls: one for the auto-infer target (miss), one
+	// for the configured fallback (hit).
+	if len(fetcher.calls) != 2 {
+		t.Fatalf("expected 2 fetcher calls, got %d: %+v", len(fetcher.calls), fetcher.calls)
+	}
+	if got := fetcher.calls[0]; got.owner != "elpic" || got.repo != ".archon" {
+		t.Errorf("first call = %+v, want auto-infer elpic/.archon", got)
+	}
+	if got := fetcher.calls[1]; got.owner != "elpic" || got.repo != "standards" {
+		t.Errorf("second call = %+v, want fallback elpic/standards", got)
+	}
+}
+
+// TestResolver_NoGitNoEnvNoFallback: when neither GITHUB_REPOSITORY is set
+// nor the target is a git repo (or git is missing) nor a WithFallback is
+// configured, Resolve returns the "no standards found" error. Auto-infer
+// must fail silently in this case.
+func TestResolver_NoGitNoEnvNoFallback(t *testing.T) {
+	unsetEnv(t, "GITHUB_REPOSITORY")
+
+	dir := t.TempDir() // plain directory, no .git
+	r, err := NewResolver(".", WithFetcher(&fakeFetcher{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Resolve(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no standards found") {
+		t.Errorf("expected 'no standards found' in error, got %v", err)
+	}
+}
+
+// TestResolver_HeaderBeatsAutoInfer: an explicit `from: acme/specific` in
+// the project file wins over the auto-infer target derived from
+// GITHUB_REPOSITORY. Explicit beats convention.
+func TestResolver_HeaderBeatsAutoInfer(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "elpic/testing")
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".archon", "standards.md"), "<!-- from: acme/specific -->\n")
+
+	fetcher := &fakeFetcher{
+		responses: map[string]fakeResponse{
+			"acme/specific/.archon/standards.md": {body: []byte("EXPLICIT"), sha: "expsha"},
+			"elpic/.archon/.archon/standards.md":  {body: []byte("AUTO"), sha: "autosha"},
+		},
+	}
+	r, err := NewResolver(".", WithFetcher(fetcher))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := r.Resolve(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if doc.Source != "github.com/acme/specific@expsha" {
+		t.Errorf("Source = %q, want github.com/acme/specific@expsha", doc.Source)
+	}
+	if doc.Body != "EXPLICIT" {
+		t.Errorf("Body = %q, want EXPLICIT", doc.Body)
+	}
+	// Auto-infer must not have been consulted.
+	for _, call := range fetcher.calls {
+		if call.owner == "elpic" && call.repo == ".archon" {
+			t.Errorf("auto-infer was consulted: %+v", call)
+		}
+	}
+	if len(fetcher.calls) != 1 {
+		t.Errorf("expected exactly 1 fetcher call (the from-header), got %d: %+v", len(fetcher.calls), fetcher.calls)
 	}
 }

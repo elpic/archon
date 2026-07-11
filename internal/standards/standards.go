@@ -69,7 +69,10 @@ type Document struct {
 //     (more than a `from:` redirect comment).
 //  2. org-header: the `from: owner/repo` line in the project file, if present.
 //     The org repo's `.archon/standards.md` is fetched via the configured Fetcher.
-//  3. fallback: the org/repo passed to WithFallback, if configured.
+//  3. auto-infer: derive the org from GITHUB_REPOSITORY or `git remote get-url`,
+//     then look for `<owner>/.archon/standards.md`. Best-effort: any failure
+//     (no env, no git, non-GitHub remote, missing `.archon` repo) falls through.
+//  4. fallback: the org/repo passed to WithFallback, if configured.
 //
 // A project file that is *only* a `from:` redirect comment is treated as a
 // tier-1 miss; resolution falls through to tier 2.
@@ -86,7 +89,16 @@ func (r *Resolver) Resolve(ctx context.Context, target string) (*Document, error
 		return r.fetchSource(ctx, from)
 	}
 
-	// Tier 3: configured fallback → fetch from the fallback org.
+	// Tier 3: auto-infer org from environment / git remote → <owner>/.archon.
+	// Best-effort: a miss (no inferred owner, or the org has no `.archon` repo)
+	// must never surface as an error. We silently fall through to the fallback.
+	if orgRepo := inferOrgRepo(target); orgRepo != "" {
+		if doc, err := r.fetchSource(ctx, orgRepo); err == nil {
+			return doc, nil
+		}
+	}
+
+	// Tier 4: configured fallback → fetch from the fallback org.
 	if r.fallbackOrgRepo != "" {
 		return r.fetchSource(ctx, r.fallbackOrgRepo)
 	}

@@ -25,7 +25,8 @@
         |                    |                    |   |
         |  audit.Runner.Run(ctx, target)          |   |
         |  1. resolver.Resolve() -> *Document     |   |
-        |     (project | org-header | fallback)   |   |
+         |     (project | org-header |              |   |
+         |      auto-infer | fallback)             |   |
         |  2. provider.Audit(ctx, doc.Body, t)     |   |
         |     -> []Violation                      |   |
         |  3. Report{Target, Violations,           |   |
@@ -44,8 +45,9 @@
    1. `standards.NewResolver(".", WithFallback(...))` is constructed.
    2. `llm.New(ctx)` is called (stub: returns "not yet implemented").
    3. `audit.NewRunner(resolver, provider)` runs the pipeline:
-      a. `resolver.Resolve(ctx, target)` walks the three tiers
-         (project → org-header → fallback) and returns a `*Document`.
+      a. `resolver.Resolve(ctx, target)` walks the four tiers
+         (project → org-header → auto-infer → fallback) and returns a
+         `*Document`. See "Resolver tiers" below.
       b. `provider.Audit(ctx, doc.Body, target)` returns `[]Violation`.
       c. A `Report{Target, Violations, StandardsSource=doc.Source}` is
          built and `Format()` renders it (with a `Standards: <source>`
@@ -64,24 +66,47 @@
 ## Component responsibilities
 
 - **cmd/archon** — process entry, subcommand dispatch (`audit`, `init`, `help`), per-subcommand flag parsing via the stdlib `flag` package, signal handling, dependency wiring.
-- **internal/standards** — find and load the standards document. `Resolver` holds a `fallbackOrgRepo` (now wired via `WithFallback`) and a `Fetcher` (now wired via `WithFetcher`, defaulting to `httpFetcher` hitting the GitHub Contents API). `fromProject` walks the target dir looking for `.archon/standards.md`. A new `fromOrgHeader` reads a `from: owner/repo` line from the project file; if the project file is *only* a redirect comment, tier 1 misses and the org source is fetched.
+- **internal/standards** — find and load the standards document. `Resolver` holds a `fallbackOrgRepo` (now wired via `WithFallback`) and a `Fetcher` (now wired via `WithFetcher`, defaulting to `httpFetcher` hitting the GitHub Contents API). `fromProject` walks the target dir looking for `.archon/standards.md`. A new `fromOrgHeader` reads a `from: owner/repo` line from the project file; if the project file is *only* a redirect comment, tier 1 misses and the org source is fetched. Tier 3 (auto-infer) lives in `autoinfer.go` and derives the org from `GITHUB_REPOSITORY` or `git remote get-url origin`; the fetch is best-effort and any miss falls through.
 - **internal/llm** — defines the contract between archon and any LLM provider. The `Provider` interface and data types are stable; only `New()` remains unimplemented.
 - **internal/audit** — orchestrates the pipeline and owns the report shape. `Report` carries `StandardsSource` (set from the resolved `Document.Source`) so the user can see which tier was used. `Report.Format()` prepends a `Standards: <source>` line when the source is non-empty. Still plain string concatenation; no JSON, no SARIF, no file/line, no exit code.
 - **internal/rules** — placeholder directory; nothing in it today.
+
+## Resolver tiers
+
+Resolution walks a fixed four-tier chain; the first hit wins.
+
+1. **Project** — `target/.archon/standards.md` with substantive body content (more than a `from:` redirect comment). When the file is *only* a `from:` redirect, this tier is treated as a miss and resolution falls through.
+2. **Header** — the `from: owner/repo` line inside the project file is the org's source of truth. The resolver fetches `github.com/<owner>/<repo>/.archon/standards.md`. An explicit `from:` header always wins over the auto-infer convention: when a user writes `from: elpic/go-strict`, that's deliberate.
+3. **Auto-infer** (new) — if no project file or no `from:` header, the resolver derives the org from `GITHUB_REPOSITORY` (set in GitHub Actions) and falls back to `git -C <target> remote get-url origin`. The remote URL is parsed for a GitHub owner; resolution then looks for `github.com/<owner>/.archon/contents/.archon/standards.md`. This is the GitHub `.github` convention applied to archon: every org can publish a `.archon` repo whose `.archon/standards.md` all of its services inherit by default. Tier 3 is best-effort: any failure (no env, no git, non-GitHub remote, missing `.archon` repo) falls through silently — it never returns an error.
+4. **Fallback** — the org/repo passed to `WithFallback(...)` / `--fallback`. The only tier the user must explicitly configure.
+
+```
+         project file         (substantive body)
+                ↓ miss
+         from: owner/repo     (org-header)
+                ↓ miss
+         GITHUB_REPOSITORY    ┐ auto-infer: best-effort,
+         or git remote        ┘   silent on any failure
+                ↓ miss
+         WithFallback         (configured, explicit)
+                ↓ miss
+         "no standards found" error
+```
 
 ## Patterns used
 
 - **Hexagonal-lite**: the `llm.Provider` interface isolates the LLM behind a port; standards loading is also behind the `Resolver` type. The audit runner is the application core.
 - **Stdlib-only, single binary**: no Cobra, no Viper, no HTTP client dep. A deliberate "boring tools" choice.
 - **Markdown as rubric**: standards have no schema; the LLM is trusted to interpret them. There is no separate rule registry on disk.
-- **Tiered resolution with fall-through**: `project > org > GitHub` is a fixed ordering. Only the first tier is implemented.
+- **Tiered resolution with fall-through**: `project > org-header > auto-infer > fallback` is a fixed ordering. Each tier is implemented; auto-infer is best-effort and never surfaces errors.
+- **GitHub `.github` convention, ported to archon**: every GitHub org can publish a `.archon` repo whose `.archon/standards.md` all of its services inherit automatically. Tier 3 makes "clone → `archon audit`" work with no config step beyond the org-level repo.
 - **Pipeline runner**: `audit.Runner.Run` is a small three-step pipeline (Resolve → Audit → Report).
 
 ## Key design decisions
 
 1. **Single static binary, stdlib only.** No CLI framework, no HTTP client library. Forces everything to live in `net/http` once the LLM client lands.
 2. **Markdown standards, LLM as judge.** No rule schema; the model interprets the document. This collapses what might have been a rule engine into a single LLM call.
-3. **Three-tier resolution, locked-in order.** `project > org > GitHub`. The `Resolver` API bakes in that order; replacing it would mean rewriting callers.
+3. **Four-tier resolution, locked-in order.** `project > org-header > auto-infer > fallback`. The `Resolver` API bakes in that order; replacing it would mean rewriting callers. Tier 3 is intentionally best-effort — a missing auto-infer target is a non-event, not an error.
 4. **Flat violation list, no file:line.** `Violation` carries `Rule` and `Description` only. No source location, so downstream tooling cannot jump to the offending code.
 5. **Context with signal handling in main.** `signal.NotifyContext` propagates cancellation to the runner and provider.
 6. **Blueprint-managed CI + drift-check.** `setup.bp` renders the GitHub Actions matrix; `elpic/actions/github/drift-check@v2` is the only guard against hand-edits.
@@ -105,6 +130,8 @@ type Fetcher interface {
     Fetch(ctx context.Context, owner, repo, path string) (body []byte, sha string, err error)
 }
 // NewResolver(workdir, WithFallback("o/r"), WithFetcher(f)) (*Resolver, error)
+// Resolve walks: project → org-header → auto-infer → fallback.
+// Tier 3 (auto-infer) is best-effort: any failure falls through silently.
 
 // internal/audit
 type Report struct {
