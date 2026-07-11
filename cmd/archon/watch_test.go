@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,31 @@ import (
 	"github.com/elpic/archon/internal/llm"
 	"github.com/elpic/archon/internal/standards"
 )
+
+// syncBuffer is a thread-safe bytes.Buffer wrapper for tests that
+// read from the buffer while a goroutine writes to it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func (s *syncBuffer) Bytes() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Bytes()
+}
 
 // watchFakeProvider is the FakeProvider used by TestRunWatch_*.
 // It records the body it was called with and returns the canned
@@ -54,14 +80,14 @@ func TestRunWatch_FileChange_EmitsProblemMatcher(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".archon", "standards.md"), []byte("# Project\nReal content\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resolver, err := standards.NewResolver(".")
+resolver, err := standards.NewResolver(".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &syncBuffer{}
+	stderr := &syncBuffer{}
 
 	done := make(chan struct{})
 	go func() {
@@ -125,8 +151,8 @@ func TestRunWatch_StandardsChange_EmitsNotice(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &syncBuffer{}
+	stderr := &syncBuffer{}
 
 	done := make(chan struct{})
 	go func() {
@@ -192,8 +218,8 @@ func TestRunWatch_StubError_KeepsRunning(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &syncBuffer{}
+	stderr := &syncBuffer{}
 
 	done := make(chan struct{})
 	go func() {
@@ -270,8 +296,8 @@ func TestRunWatch_CtxCancel_ExitsCleanly(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
+	stdout := &syncBuffer{}
+	stderr := &syncBuffer{}
 
 	done := make(chan struct{})
 	go func() {

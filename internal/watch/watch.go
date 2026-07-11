@@ -167,7 +167,13 @@ func addTree(w *fsnotify.Watcher, root string) error {
 // the underlying watcher is closed, or when the fsnotify error
 // channel delivers a non-fsnotify "watcher closed" sentinel.
 func (w *FSNotifyWatcher) loop(ctx context.Context, fw *fsnotify.Watcher, target string, out chan<- Event) {
-	defer close(out)
+	// Use a wait group to track pending sends so we can close the
+	// channel safely after all in-flight sends complete.
+	var wg sync.WaitGroup
+	defer func() {
+		wg.Wait()
+		close(out)
+	}()
 	defer fw.Close()
 
 	debounce := w.debounce()
@@ -195,7 +201,7 @@ func (w *FSNotifyWatcher) loop(ctx context.Context, fw *fsnotify.Watcher, target
 			if kind == StandardsChanged {
 				ev.StandardsSource = "local:" + p
 			}
-			send(ctx, out, ev)
+			send(ctx, out, ev, &wg)
 		}
 	}
 
@@ -256,7 +262,7 @@ func (w *FSNotifyWatcher) loop(ctx context.Context, fw *fsnotify.Watcher, target
 				stop()
 				return
 			}
-			send(ctx, out, Event{Kind: Error, Err: err})
+			send(ctx, out, Event{Kind: Error, Err: err}, &wg)
 		}
 	}
 }
@@ -264,12 +270,16 @@ func (w *FSNotifyWatcher) loop(ctx context.Context, fw *fsnotify.Watcher, target
 // send forwards ev to ch, respecting ctx cancellation. If the
 // receiver is slow and the context is cancelled, the event is
 // dropped rather than blocking the loop.
-func send(ctx context.Context, ch chan<- Event, ev Event) {
+func send(ctx context.Context, ch chan<- Event, ev Event, wg *sync.WaitGroup) {
+	wg.Add(1)
+	defer wg.Done()
 	select {
 	case <-ctx.Done():
 	case ch <- ev:
 	}
 }
+
+// isStandardsPath reports whether p is the project's standards file,
 
 // isStandardsPath reports whether p is the project's standards file,
 // relative to target. The standards file is conventionally
