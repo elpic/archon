@@ -1,0 +1,13 @@
+# archon — Blueprint configuration
+# Apply:  blueprint apply setup.bp
+# Check:  blueprint check setup.bp --against .github/workflows/
+
+var APP_NAME archon
+var GO_VERSION 1.23
+
+var CHECKS [{"file":"setup.bp","template":"@github:elpic/templates@main:actions/github/integration/go","against":".github/workflows"},{"file":"setup.bp","template":"@github:elpic/templates@main:actions/github/drift-check","against":".github/workflows"}]
+
+mise go@${GO_VERSION} on: [mac, linux]
+
+render @github:elpic/templates@main:actions/github/integration/go output: .github/workflows on: [mac, linux]
+render @github:elpic/templates@main:actions/github/drift-check output: .github/workflows on: [mac, linux]
