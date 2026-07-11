@@ -1,6 +1,13 @@
 # archon — Blueprint configuration
 # Apply:  blueprint apply setup.bp
-# Check:  blueprint check setup.bp --against .github/workflows/
+# Check:  blueprint check setup.bp --template @github:elpic/templates@main:actions/github/integration/go  --against .github/workflows/integration.yml
+#         blueprint check setup.bp --template @github:elpic/templates@main:actions/github/drift-check    --against .github/workflows/drift-check.yml
+#
+# Security: elpic/templates@main is a mutable ref. Mitigation relies on
+# (a) branch protection on elpic/templates:main, and (b) the drift-check
+# workflow failing any PR that introduces drift between setup.bp and
+# the rendered workflows. SHA-pinning is not supported in @github: shorthand
+# (Blueprint resolves origin/<ref>, not origin/<sha>).
 
 var APP_NAME archon
 var GO_VERSION 1.23
@@ -10,4 +17,4 @@ var CHECKS [{"file":"setup.bp","template":"@github:elpic/templates@main:actions/
 mise go@${GO_VERSION} on: [mac, linux]
 
 render @github:elpic/templates@main:actions/github/integration/go output: .github/workflows on: [mac, linux]
-render @github:elpic/templates@main:actions/github/drift-check output: .github/workflows on: [mac, linux]
+render @github:elpic/templates@main:actions/github/drift-check    output: .github/workflows on: [mac, linux]

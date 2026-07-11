@@ -1,0 +1,17 @@
+[tools]
+go = "1.23"
+
+[tasks.lint]
+run = "go vet ./..."
+
+[tasks.build]
+run = "go build -o archon ./cmd/archon"
+
+[tasks."test:coverage"]
+run = "go test ./... -coverprofile=coverage.out"
+
+[tasks."test:integration"]
+run = "go test ./... -tags=integration"
+
+[tasks.security]
+run = "go vet ./..."

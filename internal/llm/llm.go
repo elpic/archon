@@ -31,6 +31,21 @@ const (
 	SeverityCritical
 )
 
+func (s Severity) String() string {
+	switch s {
+	case SeverityInfo:
+		return "info"
+	case SeverityWarn:
+		return "warn"
+	case SeverityError:
+		return "error"
+	case SeverityCritical:
+		return "critical"
+	default:
+		return "unknown"
+	}
+}
+
 func New(ctx context.Context) (Provider, error) {
 	// Default implementation will dispatch on env vars (OPENROUTER_API_KEY,
 	// OPENAI_API_KEY, ANTHROPIC_API_KEY) to pick the right backend.
