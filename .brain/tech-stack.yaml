@@ -1,0 +1,52 @@
+name: "archon"
+language: "go"
+version: "1.25.12"
+package-manager: "go-modules"
+frameworks: []
+database:
+  type: "none"
+runtime-dependencies:
+  - name: "github.com/fsnotify/fsnotify"
+    version: "v1.10.1"
+    purpose: "filesystem watching for `archon watch` (debounced event stream). One and only non-stdlib dep; added because file-watching has no stdlib equivalent."
+dev-tools:
+  - name: "mise"
+    purpose: "toolchain + task runner (CI interface)"
+  - name: "go vet"
+    purpose: "linting"
+    invocation: "mise run lint"
+  - name: "govulncheck"
+    version: "v1.6.0"
+    purpose: "vulnerability scan"
+    invocation: "mise run security"
+  - name: "blueprint"
+    purpose: "renders .github/workflows from setup.bp"
+  - name: "elpic/actions/github/drift-check"
+    version: "v2"
+    purpose: "guard against hand-edits to rendered CI"
+testing:
+  unit: "go test ./... (via mise run test:coverage)"
+  integration: "go test ./... -tags=integration (via mise run test:integration; currently no integration-tagged tests exist)"
+  coverage-tool: "go test -coverprofile=coverage.out"
+ci: "github-actions"
+ci-jobs:
+  - test
+  - lint
+  - build
+  - integration
+  - security
+ci-job-dependencies:
+  integration: [test, lint, build]
+build:
+  command: "go build -o archon-bin ./cmd/archon"
+  output: "archon-bin (single static binary)"
+install: "go install github.com/elpic/archon/cmd/archon@latest"
+external-services:
+  llm-providers:
+    - "openrouter (env var, not yet read)"
+    - "openai (env var, not yet read)"
+    - "anthropic (env var, not yet read)"
+  github-fallback: "not yet implemented"
+notes:
+  - "go.sum is absent; stdlib-only today."
+  - "AGENTS.md states Go 1.23+ but go.mod pins 1.25.12 — docs drift."

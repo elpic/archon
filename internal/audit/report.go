@@ -43,3 +43,25 @@ func (r *Report) Format() string {
 	}
 	return b.String()
 }
+
+// FormatDiagnostic renders each violation in the "problem-matcher"
+// format consumed by editor quickfix / GCC / clippy style pickers:
+//
+//	path:line:col: [severity] message
+//
+// It is the output contract for the `archon watch` subcommand: one
+// violation per line, with no header or summary, so editors can
+// stream the lines and jump directly to the offending code. A
+// violation with a missing file or zero line/column renders as
+// "?:line:col" / "path:?:col" / "path:line:?" so the line always
+// parses as a problem matcher entry.
+func (r *Report) FormatDiagnostic() string {
+	if len(r.Violations) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, v := range r.Violations {
+		fmt.Fprintln(&b, v.String())
+	}
+	return b.String()
+}
