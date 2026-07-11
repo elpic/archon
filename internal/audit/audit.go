@@ -30,7 +30,7 @@ func (r *Runner) Run(ctx context.Context, target string) (*Report, error) {
 		return nil, fmt.Errorf("resolve standards: %w", err)
 	}
 
-	violations, err := r.llmProvider.Audit(ctx, docs, target)
+	violations, err := r.llmProvider.Audit(ctx, []byte(docs.Body), target)
 	if err != nil {
 		return nil, fmt.Errorf("llm audit: %w", err)
 	}

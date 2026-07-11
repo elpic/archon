@@ -1,0 +1,18 @@
+[tools]
+go = "1.25.12"
+"go:golang.org/x/vuln/cmd/govulncheck" = "v1.6.0"
+
+[tasks.lint]
+run = "go vet ./..."
+
+[tasks.build]
+run = "go build -o archon-bin ./cmd/archon"
+
+[tasks."test:coverage"]
+run = "go test ./... -coverprofile=coverage.out"
+
+[tasks."test:integration"]
+run = "go test ./... -tags=integration"
+
+[tasks.security]
+run = "govulncheck ./..."
