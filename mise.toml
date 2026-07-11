@@ -1,11 +1,12 @@
 [tools]
-go = "1.23"
+go = "1.23.12"
+"go:golang.org/x/vuln/cmd/govulncheck" = "latest"
 
 [tasks.lint]
 run = "go vet ./..."
 
 [tasks.build]
-run = "go build -o archon ./cmd/archon"
+run = "go build -o archon-bin ./cmd/archon"
 
 [tasks."test:coverage"]
 run = "go test ./... -coverprofile=coverage.out"
@@ -14,4 +15,4 @@ run = "go test ./... -coverprofile=coverage.out"
 run = "go test ./... -tags=integration"
 
 [tasks.security]
-run = "go vet ./..."
+run = "govulncheck ./..."
