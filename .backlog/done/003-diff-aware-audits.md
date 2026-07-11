@@ -1,10 +1,12 @@
 ---
 title: "Diff-Aware Audits"
-status: pending
+status: done
 priority: high
 sprint: 1
 labels: [feature, ideate]
 created: "2026-07-11"
+completed: "2026-07-11"
+pr: "https://github.com/elpic/archon/pull/4"
 ---
 
 # Diff-Aware Audits
