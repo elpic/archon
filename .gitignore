@@ -1,0 +1,15 @@
+# Binaries
+/bin/
+/archon
+
+# Test artifacts
+*.out
+coverage.txt
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
