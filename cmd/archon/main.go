@@ -9,6 +9,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/elpic/archon/internal/audit"
@@ -21,9 +23,10 @@ import (
 const usage = `archon — AI-powered standards auditor
 
 usage:
-  archon audit  [--fallback owner/repo] [--target path]
+  archon audit  [--fallback owner/repo] [--target path] [--fix]
   archon watch  [--fallback owner/repo] [--target path]
   archon init   [--from owner/repo]    [--target path]
+  archon explain <rule-id> [--target path]
   archon help
 `
 
@@ -43,6 +46,8 @@ func main() {
 		err = runWatch(ctx, os.Args[2:])
 	case "init":
 		err = runInit(ctx, os.Args[2:])
+	case "explain":
+		err = runExplain(ctx, os.Args[2:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -62,11 +67,15 @@ func runAudit(ctx context.Context, args []string) error {
 	target := fs.String("target", ".", "project path to audit")
 	changed := fs.Bool("changed", false, "audit only files changed since HEAD~1 (uses git diff)")
 	since := fs.String("since", "", "audit files changed since given ref (e.g. main, HEAD~3, commit SHA)")
+	fix := fs.Bool("fix", false, "output suggested fixes in unified diff format")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *target == "" {
 		return fmt.Errorf("audit: --target must be non-empty")
+	}
+	if err := validateTarget(*target, "audit"); err != nil {
+		return err
 	}
 
 	resolver, err := newResolver(*fallback)
@@ -108,7 +117,11 @@ func runAudit(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}
-	fmt.Print(report.Format())
+	if *fix {
+		fmt.Print(report.FormatFix())
+	} else {
+		fmt.Print(report.Format())
+	}
 	return nil
 }
 
@@ -134,6 +147,9 @@ func runWatch(ctx context.Context, args []string) error {
 	}
 	if *target == "" {
 		return fmt.Errorf("watch: --target must be non-empty")
+	}
+	if err := validateTarget(*target, "watch"); err != nil {
+		return err
 	}
 
 	resolver, err := newResolver(*fallback)
@@ -226,6 +242,145 @@ func newResolver(fallback string) (*standards.Resolver, error) {
 		opts = append(opts, standards.WithFallback(fallback))
 	}
 	return standards.NewResolver(".", opts...)
+}
+
+// runExplain resolves the standards and prints an explanation for a specific rule.
+// It can run standalone (no audit required) — it just resolves the standards
+// and asks the LLM to explain the rule.
+func runExplain(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("explain", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	target := fs.String("target", ".", "project path to audit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("explain: missing rule-id argument")
+	}
+	ruleID := fs.Arg(0)
+	// Validate ruleID to prevent injection (alphanumeric, hyphen, underscore only)
+	if !isValidRuleID(ruleID) {
+		return fmt.Errorf("explain: invalid rule-id %q (only alphanumeric, hyphen, underscore allowed)", ruleID)
+	}
+
+	if *target == "" {
+		return fmt.Errorf("explain: --target must be non-empty")
+	}
+	if err := validateTarget(*target, "explain"); err != nil {
+		return err
+	}
+
+	// Use fallback from env or config for explain (no fallback flag for now)
+	resolver, err := newResolver("")
+	if err != nil {
+		return fmt.Errorf("standards resolver: %w", err)
+	}
+
+	// Resolve the standards document
+	doc, err := resolver.Resolve(ctx, *target)
+	if err != nil {
+		return fmt.Errorf("resolve standards: %w", err)
+	}
+
+	// Find the rule in the standards document
+	ruleText := findRuleInStandards(doc.Body, ruleID)
+	if ruleText == "" {
+		return fmt.Errorf("rule %q not found in standards document", ruleID)
+	}
+
+	// Print the rule text
+	fmt.Printf("Rule: %s\n\n", ruleID)
+	fmt.Printf("%s\n\n", ruleText)
+
+	// If LLM provider is available, get reasoning and examples
+	provider, err := llm.New(ctx)
+	if err == nil {
+		reasoning, examples, fixSuggestion, err := explainRule(ctx, provider, doc.Body, ruleID)
+		if err == nil {
+			fmt.Printf("Reasoning:\n%s\n\n", reasoning)
+			if len(examples) > 0 {
+				fmt.Printf("Examples:\n")
+				for i, ex := range examples {
+					fmt.Printf("  %d. %s\n", i+1, ex)
+				}
+				fmt.Println()
+			}
+			fmt.Printf("Fix it with: %s\n", fixSuggestion)
+		} else {
+			fmt.Printf("(LLM unavailable: %v)\n", err)
+		}
+	} else {
+		fmt.Printf("(LLM unavailable: %v)\n", err)
+	}
+
+	return nil
+}
+
+// isValidRuleID validates that ruleID contains only alphanumeric, hyphen, or underscore characters.
+func isValidRuleID(ruleID string) bool {
+	if ruleID == "" {
+		return false
+	}
+	for _, r := range ruleID {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// explainRule asks the LLM to explain a rule, provide examples, and suggest a fix.
+func explainRule(ctx context.Context, provider llm.Provider, standardsBody, ruleID string) (reasoning string, examples []string, fixSuggestion string, err error) {
+	// TODO: Implement LLM call for explanation
+	// For now, return placeholder values
+	return "LLM explanation not yet implemented", []string{}, "run `archon audit --fix` to see suggested fixes", nil
+}
+
+// findRuleInStandards extracts the rule text from the standards markdown
+// by looking for a heading that matches the rule ID exactly.
+func findRuleInStandards(body, ruleID string) string {
+	inRule := false
+	var ruleLines []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			// Strip leading #'s and whitespace, then split on first ':'
+			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			parts := strings.SplitN(heading, ":", 2)
+			headingID := strings.TrimSpace(parts[0])
+			if headingID == ruleID {
+				inRule = true
+				continue
+			}
+			// If we were in a rule and hit another heading, stop
+			if inRule {
+				break
+			}
+		}
+		if inRule {
+			ruleLines = append(ruleLines, line)
+		}
+	}
+	return strings.Join(ruleLines, "\n")
+}
+
+// validateTarget checks that target resolves to a path within the
+// current working directory. Returns an error if the path escapes
+// the cwd boundary (path traversal prevention).
+func validateTarget(target, cmd string) error {
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("%s: invalid target path: %w", cmd, err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("%s: failed to get working directory: %w", cmd, err)
+	}
+	rel, err := filepath.Rel(cwd, absTarget)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("%s: target path %q must be within current working directory %q", cmd, target, cwd)
+	}
+	return nil
 }
 
 // stubProvider is the placeholder used by runWatch when llm.New

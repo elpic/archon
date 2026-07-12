@@ -22,6 +22,15 @@ run = "go test ./... -tags=integration"
 description = "Run govulncheck for vulnerability scanning"
 run = "govulncheck ./..."
 
+# Markdown formatting (requires prettier: npm install -g prettier)
+[tasks.fmt]
+description = "Format markdown files with prettier"
+run = "prettier --write \"**/*.md\""
+
+[tasks."fmt:check"]
+description = "Check markdown formatting without writing"
+run = "prettier --check \"**/*.md\""
+
 # Archon CLI helpers
 [tasks.watch]
 description = "Start file-watching audit loop (Ctrl-C to stop)"
@@ -31,13 +40,17 @@ run = "go run ./cmd/archon watch --target ."
 description = "Run a single audit pass on the target project"
 run = "go run ./cmd/archon audit --target ."
 
+[tasks.explain]
+description = "Explain a specific rule from the standards"
+run = 'go run ./cmd/archon explain {{arg(name="rule_id")}} --target .'
+
 [tasks.init]
 description = "Scaffold .archon/standards.md in the target project"
 run = "go run ./cmd/archon init --target ."
 
 [tasks.init-from]
 description = "Scaffold .archon/standards.md inheriting from an org repo (args: org/repo [target])"
-run = "go run ./cmd/archon init --from {{args.0}} --target {{args.1}}"
+run = 'go run ./cmd/archon init --from {{arg(name="org_repo")}} --target {{arg(name="target", default=".")}}'
 
 [tasks.help]
 description = "Show CLI help"

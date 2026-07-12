@@ -29,6 +29,9 @@ func runInit(_ context.Context, args []string) error {
 	if *target == "" {
 		return fmt.Errorf("init: --target must be non-empty")
 	}
+	if err := validateTarget(*target, "init"); err != nil {
+		return err
+	}
 	if err := validateFrom(*from); err != nil {
 		return err
 	}

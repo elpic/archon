@@ -25,6 +25,9 @@ type Provider interface {
 // otherwise. The string representations rendered by String() use
 // "? for any unset coordinate so the output stays a single line
 // consumable by editor problem-matchers.
+//
+// Suggestion is a concrete fix the user can apply (unified diff hunk).
+// RuleDoc is a markdown anchor or URL pointing to the rule's documentation.
 type Violation struct {
 	Rule        string
 	Description string
@@ -32,6 +35,8 @@ type Violation struct {
 	File        string
 	Line        int
 	Column      int
+	Suggestion  string
+	RuleDoc     string
 }
 
 // String renders the violation in the "problem-matcher" format used by
