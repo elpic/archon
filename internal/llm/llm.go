@@ -6,6 +6,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -99,8 +100,29 @@ func (s Severity) String() string {
 	}
 }
 
-func New(ctx context.Context) (Provider, error) {
-	// Default implementation will dispatch on env vars (OPENROUTER_API_KEY,
-	// OPENAI_API_KEY, ANTHROPIC_API_KEY) to pick the right backend.
-	return nil, fmt.Errorf("llm.New not yet implemented")
+// New constructs a Provider by inspecting environment variables.
+// Priority order:
+//  1. OPENAI_API_KEY  → OpenAI (api.openai.com)
+//  2. OPENROUTER_API_KEY → OpenRouter (openrouter.ai/api/v1, or OPENROUTER_BASE_URL)
+//  3. ANTHROPIC_API_KEY → not yet implemented
+//
+// Returns an error if no provider can be selected.
+func New(_ context.Context) (Provider, error) {
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		return newOpenAIProvider(key, "https://api.openai.com/v1", ""), nil
+	}
+
+	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+		baseURL := os.Getenv("OPENROUTER_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://openrouter.ai/api/v1"
+		}
+		return newOpenAIProvider(key, baseURL, ""), nil
+	}
+
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return nil, fmt.Errorf("anthropic provider not yet implemented; set OPENAI_API_KEY or OPENROUTER_API_KEY instead")
+	}
+
+	return nil, fmt.Errorf("no LLM API key found; set OPENAI_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY")
 }
