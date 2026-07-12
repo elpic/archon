@@ -13,3 +13,6 @@ coverage.txt
 
 # OS
 Thumbs.db
+
+# Secrets
+.env

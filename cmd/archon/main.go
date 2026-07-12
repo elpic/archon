@@ -74,21 +74,8 @@ func runAudit(ctx context.Context, args []string) error {
 	if *target == "" {
 		return fmt.Errorf("audit: --target must be non-empty")
 	}
-	// Validate target is within current working directory to prevent path traversal
-	absTarget, err := filepath.Abs(*target)
-	if err != nil {
-		return fmt.Errorf("audit: invalid target path: %w", err)
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("audit: failed to get working directory: %w", err)
-	}
-	absCwd, err := filepath.Abs(cwd)
-	if err != nil {
-		return fmt.Errorf("audit: failed to get working directory: %w", err)
-	}
-	if !strings.HasPrefix(absTarget, absCwd) {
-		return fmt.Errorf("audit: target path %q must be within current working directory %q", *target, cwd)
+	if err := validateTarget(*target, "audit"); err != nil {
+		return err
 	}
 
 	resolver, err := newResolver(*fallback)
@@ -254,13 +241,6 @@ func newResolver(fallback string) (*standards.Resolver, error) {
 	return standards.NewResolver(".", opts...)
 }
 
-// stubProvider is the placeholder used by runWatch when llm.New
-// fails (the LLM client is a stub today). It always reports the
-// original construction error from Audit() so the caller's error
-// path stays the same shape as it will be once the real provider
-// lands. It is not a test fake and is not part of the llm package
-// surface — it is plumbing so the watch loop can run today. When
-// the real provider is implemented, this type goes away.
 // runExplain resolves the standards and prints an explanation for a specific rule.
 // It can run standalone (no audit required) — it just resolves the standards
 // and asks the LLM to explain the rule.
@@ -283,21 +263,8 @@ func runExplain(ctx context.Context, args []string) error {
 	if *target == "" {
 		return fmt.Errorf("explain: --target must be non-empty")
 	}
-	// Validate target is within current working directory to prevent path traversal
-	absTarget, err := filepath.Abs(*target)
-	if err != nil {
-		return fmt.Errorf("explain: invalid target path: %w", err)
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("explain: failed to get working directory: %w", err)
-	}
-	absCwd, err := filepath.Abs(cwd)
-	if err != nil {
-		return fmt.Errorf("explain: failed to get working directory: %w", err)
-	}
-	if !strings.HasPrefix(absTarget, absCwd) {
-		return fmt.Errorf("explain: target path %q must be within current working directory %q", *target, cwd)
+	if err := validateTarget(*target, "explain"); err != nil {
+		return err
 	}
 
 	// Use fallback from env or config for explain (no fallback flag for now)
@@ -307,7 +274,7 @@ func runExplain(ctx context.Context, args []string) error {
 	}
 
 	// Resolve the standards document
-	doc, err := resolver.Resolve(context.Background(), *target)
+	doc, err := resolver.Resolve(ctx, *target)
 	if err != nil {
 		return fmt.Errorf("resolve standards: %w", err)
 	}
@@ -323,9 +290,8 @@ func runExplain(ctx context.Context, args []string) error {
 	fmt.Printf("%s\n\n", ruleText)
 
 	// If LLM provider is available, get reasoning and examples
-	provider, err := llm.New(context.Background())
+	provider, err := llm.New(ctx)
 	if err == nil {
-		ctx := context.Background()
 		reasoning, examples, fixSuggestion, err := explainRule(ctx, provider, doc.Body, ruleID)
 		if err == nil {
 			fmt.Printf("Reasoning:\n%s\n\n", reasoning)
@@ -368,34 +334,50 @@ func explainRule(ctx context.Context, provider llm.Provider, standardsBody, rule
 }
 
 // findRuleInStandards extracts the rule text from the standards markdown
-// by looking for a heading that matches the rule ID.
+// by looking for a heading that matches the rule ID exactly.
 func findRuleInStandards(body, ruleID string) string {
 	inRule := false
 	var ruleLines []string
-	// Match markdown headings like "### RuleID: Description" or "RuleID:"
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
-		// Match markdown headings like "### RuleID: Description" or "### RuleID"
 		if strings.HasPrefix(trimmed, "#") {
-			// Check if this heading matches our rule
-			if strings.Contains(trimmed, ruleID+":") ||
-				strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, "#")), ruleID+":") {
+			// Strip leading #'s and whitespace, then split on first ':'
+			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			parts := strings.SplitN(heading, ":", 2)
+			headingID := strings.TrimSpace(parts[0])
+			if headingID == ruleID {
 				inRule = true
 				continue
 			}
 			// If we were in a rule and hit another heading, stop
-			if inRule && strings.HasPrefix(strings.TrimSpace(line), "#") {
+			if inRule {
 				break
 			}
 		}
 		if inRule {
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
-				break
-			}
 			ruleLines = append(ruleLines, line)
 		}
 	}
 	return strings.Join(ruleLines, "\n")
+}
+
+// validateTarget checks that target resolves to a path within the
+// current working directory. Returns an error if the path escapes
+// the cwd boundary (path traversal prevention).
+func validateTarget(target, cmd string) error {
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("%s: invalid target path: %w", cmd, err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("%s: failed to get working directory: %w", cmd, err)
+	}
+	rel, err := filepath.Rel(cwd, absTarget)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("%s: target path %q must be within current working directory %q", cmd, target, cwd)
+	}
+	return nil
 }
 
 // stubProvider is the placeholder used by runWatch when llm.New

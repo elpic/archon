@@ -196,3 +196,163 @@ func TestReport_FormatDiagnostic_Multiple(t *testing.T) {
 		t.Errorf("line 1 = %q", lines[1])
 	}
 }
+
+func TestIsSafePath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"", false},
+		{"/etc/passwd", false},
+		{"../etc/passwd", false},
+		{".", false},
+		{"internal/foo.go", true},
+		{"a/b/c.go", true},
+		{"my..config.go", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			got := isSafePath(tc.path)
+			if got != tc.want {
+				t.Errorf("isSafePath(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatFix_NoViolations(t *testing.T) {
+	r := &Report{Target: "./..."}
+	got := r.FormatFix()
+	if got != "" {
+		t.Errorf("FormatFix() on empty report = %q, want empty", got)
+	}
+}
+
+func TestFormatFix_WithSuggestion(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:        "no-comments",
+				Description: "found a comment",
+				Severity:    llm.SeverityError,
+				File:        "internal/foo/foo.go",
+				Line:        42,
+				Suggestion:  "remove the comment",
+			},
+		},
+	}
+	got := r.FormatFix()
+	if !strings.Contains(got, "--- a/internal/foo/foo.go") {
+		t.Errorf("expected '--- a/...' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "+++ b/internal/foo/foo.go") {
+		t.Errorf("expected '+++ b/...' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "-found a comment") {
+		t.Errorf("expected '-found a comment' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "+remove the comment") {
+		t.Errorf("expected '+remove the comment' in output, got: %q", got)
+	}
+}
+
+func TestFormatFix_NoSuggestion(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:        "no-comments",
+				Description: "found a comment",
+				Severity:    llm.SeverityError,
+				File:        "internal/foo/foo.go",
+				Line:        42,
+			},
+		},
+	}
+	got := r.FormatFix()
+	if got != "" {
+		t.Errorf("FormatFix() without suggestion = %q, want empty", got)
+	}
+}
+
+func TestFormatFix_UnsafePath(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:        "no-comments",
+				Description: "found a comment",
+				Severity:    llm.SeverityError,
+				File:        "../etc/passwd",
+				Line:        1,
+				Suggestion:  "fix it",
+			},
+		},
+	}
+	got := r.FormatFix()
+	if got != "" {
+		t.Errorf("FormatFix() with unsafe path = %q, want empty", got)
+	}
+}
+
+func TestFormatFix_MultipleViolations(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:        "r1",
+				Description: "d1",
+				Severity:    llm.SeverityError,
+				File:        "a.go",
+				Line:        1,
+				Suggestion:  "fix1",
+			},
+			{
+				Rule:        "r2",
+				Description: "d2",
+				Severity:    llm.SeverityWarn,
+				File:        "b.go",
+				Line:        2,
+				Suggestion:  "fix2",
+			},
+			{
+				Rule:        "r3",
+				Description: "d3",
+				Severity:    llm.SeverityInfo,
+				File:        "c.go",
+				// no suggestion — should be skipped
+			},
+		},
+	}
+	got := r.FormatFix()
+	if !strings.Contains(got, "a.go") {
+		t.Errorf("expected a.go in output, got: %q", got)
+	}
+	if !strings.Contains(got, "b.go") {
+		t.Errorf("expected b.go in output, got: %q", got)
+	}
+	if strings.Contains(got, "c.go") {
+		t.Errorf("c.go should not appear (no suggestion), got: %q", got)
+	}
+}
+
+func TestFormatFix_ZeroLine(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:       "r1",
+				Description: "d1",
+				Severity:   llm.SeverityError,
+				File:       "a.go",
+				Line:       0,
+				Suggestion: "fix",
+			},
+		},
+	}
+	got := r.FormatFix()
+	if !strings.Contains(got, "@@ -0,0 +1,1 @@") {
+		t.Errorf("expected '@@ -0,0 +1,1 @@' fallback for zero line, got: %q", got)
+	}
+}

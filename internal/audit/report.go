@@ -69,8 +69,8 @@ func (r *Report) FormatDiagnostic() string {
 
 // FormatFix renders each violation with a suggested fix in unified diff
 // format. Only violations that have a Suggestion field are included.
-// The output format follows the unified diff convention so it can be
-// piped to `patch -p1` or reviewed in a PR.
+// The output is a human-readable suggestion; it is NOT a machine-consumable
+// patch (the "-" line is the violation description, not actual file content).
 func (r *Report) FormatFix() string {
 	if len(r.Violations) == 0 {
 		return ""
