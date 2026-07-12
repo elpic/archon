@@ -14,6 +14,14 @@ type Checker interface {
 	Check(file string, content []byte) []llm.Violation
 }
 
+// DirectoryChecker evaluates a directory against a rule and returns any
+// violations. Unlike Checker, it operates on the whole directory rather
+// than a single file's content — useful for existence, absence, and
+// cross-file checks.
+type DirectoryChecker interface {
+	CheckDirectory(dir string) []llm.Violation
+}
+
 // PatternChecker runs regex patterns extracted from a Rule's markdown body
 // against file content. Each line matching "Pattern: <regex>" in the body
 // is compiled and matched against the content. Every match becomes a
