@@ -32,6 +32,20 @@ go test ./...
 
 Experimental. APIs and rule formats will change.
 
+## Rules
+
+### ErrorWrapping: Wrap errors with context
+
+When returning errors, wrap them with context using `fmt.Errorf("...: %w", err)` or `errors.Join`. This preserves the error chain for debugging.
+
+**Severity:** Error
+
+### NoPrintf: Avoid fmt.Printf in library code
+
+Avoid using fmt.Printf, fmt.Println, or similar in library code. Use structured logging (slog, zap, zerolog) instead so output can be controlled by the application.
+
+**Severity:** Warning
+
 ## License
 
 MIT

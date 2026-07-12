@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/elpic/archon/internal/audit"
@@ -21,9 +22,10 @@ import (
 const usage = `archon — AI-powered standards auditor
 
 usage:
-  archon audit  [--fallback owner/repo] [--target path]
+  archon audit  [--fallback owner/repo] [--target path] [--fix]
   archon watch  [--fallback owner/repo] [--target path]
   archon init   [--from owner/repo]    [--target path]
+  archon explain <rule-id> [--target path]
   archon help
 `
 
@@ -43,6 +45,8 @@ func main() {
 		err = runWatch(ctx, os.Args[2:])
 	case "init":
 		err = runInit(ctx, os.Args[2:])
+	case "explain":
+		err = runExplain(ctx, os.Args[2:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -62,6 +66,7 @@ func runAudit(ctx context.Context, args []string) error {
 	target := fs.String("target", ".", "project path to audit")
 	changed := fs.Bool("changed", false, "audit only files changed since HEAD~1 (uses git diff)")
 	since := fs.String("since", "", "audit files changed since given ref (e.g. main, HEAD~3, commit SHA)")
+	fix := fs.Bool("fix", false, "output suggested fixes in unified diff format")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -108,7 +113,11 @@ func runAudit(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}
-	fmt.Print(report.Format())
+	if *fix {
+		fmt.Print(report.FormatFix())
+	} else {
+		fmt.Print(report.Format())
+	}
 	return nil
 }
 
@@ -226,6 +235,117 @@ func newResolver(fallback string) (*standards.Resolver, error) {
 		opts = append(opts, standards.WithFallback(fallback))
 	}
 	return standards.NewResolver(".", opts...)
+}
+
+// stubProvider is the placeholder used by runWatch when llm.New
+// fails (the LLM client is a stub today). It always reports the
+// original construction error from Audit() so the caller's error
+// path stays the same shape as it will be once the real provider
+// lands. It is not a test fake and is not part of the llm package
+// surface — it is plumbing so the watch loop can run today. When
+// the real provider is implemented, this type goes away.
+// runExplain resolves the standards and prints an explanation for a specific rule.
+// It can run standalone (no audit required) — it just resolves the standards
+// and asks the LLM to explain the rule.
+func runExplain(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("explain", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	target := fs.String("target", ".", "project path to audit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("explain: missing rule-id argument")
+	}
+	ruleID := fs.Arg(0)
+
+	if *target == "" {
+		return fmt.Errorf("explain: --target must be non-empty")
+	}
+
+	// Use fallback from env or config for explain (no fallback flag for now)
+	resolver, err := newResolver("")
+	if err != nil {
+		return fmt.Errorf("standards resolver: %w", err)
+	}
+
+	// Resolve the standards document
+	doc, err := resolver.Resolve(context.Background(), *target)
+	if err != nil {
+		return fmt.Errorf("resolve standards: %w", err)
+	}
+
+	// Find the rule in the standards document
+	ruleText := findRuleInStandards(doc.Body, ruleID)
+	if ruleText == "" {
+		return fmt.Errorf("rule %q not found in standards document", ruleID)
+	}
+
+	// Print the rule text
+	fmt.Printf("Rule: %s\n\n", ruleID)
+	fmt.Printf("%s\n\n", ruleText)
+
+	// If LLM provider is available, get reasoning and examples
+	provider, err := llm.New(context.Background())
+	if err == nil {
+		ctx := context.Background()
+		reasoning, examples, fixSuggestion, err := explainRule(ctx, provider, doc.Body, ruleID)
+		if err == nil {
+			fmt.Printf("Reasoning:\n%s\n\n", reasoning)
+			if len(examples) > 0 {
+				fmt.Printf("Examples:\n")
+				for i, ex := range examples {
+					fmt.Printf("  %d. %s\n", i+1, ex)
+				}
+				fmt.Println()
+			}
+			fmt.Printf("Fix it with: %s\n", fixSuggestion)
+		} else {
+			fmt.Printf("(LLM unavailable: %v)\n", err)
+		}
+	} else {
+		fmt.Printf("(LLM unavailable: %v)\n", err)
+	}
+
+	return nil
+}
+
+// findRuleInStandards extracts the rule text from the standards markdown
+// by looking for a heading that matches the rule ID.
+func findRuleInStandards(body, ruleID string) string {
+	inRule := false
+	var ruleLines []string
+	// Match markdown headings like "### RuleID: Description" or "RuleID:"
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Match markdown headings like "### RuleID: Description" or "### RuleID"
+		if strings.HasPrefix(trimmed, "#") {
+			// Check if this heading matches our rule
+			if strings.Contains(trimmed, ruleID+":") ||
+				strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, "#")), ruleID+":") {
+				inRule = true
+				continue
+			}
+			// If we were in a rule and hit another heading, stop
+			if inRule && strings.HasPrefix(strings.TrimSpace(line), "#") {
+				break
+			}
+		}
+		if inRule {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				break
+			}
+			ruleLines = append(ruleLines, line)
+		}
+	}
+	return strings.Join(ruleLines, "\n")
+}
+
+// explainRule asks the LLM to explain a rule, provide examples, and suggest a fix.
+func explainRule(ctx context.Context, provider llm.Provider, standardsBody, ruleID string) (reasoning string, examples []string, fixSuggestion string, err error) {
+	// TODO: Implement LLM call for explanation
+	// For now, return placeholder values
+	return "LLM explanation not yet implemented", []string{}, "run `archon audit --fix` to see suggested fixes", nil
 }
 
 // stubProvider is the placeholder used by runWatch when llm.New

@@ -65,3 +65,33 @@ func (r *Report) FormatDiagnostic() string {
 	}
 	return b.String()
 }
+
+// FormatFix renders each violation with a suggested fix in unified diff
+// format. Only violations that have a Suggestion field are included.
+// The output format follows the unified diff convention so it can be
+// piped to `patch -p1` or reviewed in a PR.
+func (r *Report) FormatFix() string {
+	if len(r.Violations) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, v := range r.Violations {
+		if v.Suggestion == "" {
+			continue
+		}
+		if v.File == "" {
+			continue
+		}
+		// Generate a minimal unified diff for the suggestion
+		fmt.Fprintf(&b, "--- a/%s\n", v.File)
+		fmt.Fprintf(&b, "+++ b/%s\n", v.File)
+		if v.Line > 0 {
+			fmt.Fprintf(&b, "@@ -%d,1 +%d,1 @@\n", v.Line, v.Line)
+		} else {
+			fmt.Fprintf(&b, "@@ -0,0 +1,1 @@\n")
+		}
+		fmt.Fprintf(&b, "-%s\n", v.Description)
+		fmt.Fprintf(&b, "+%s\n", v.Suggestion)
+	}
+	return b.String()
+}
