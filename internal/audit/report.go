@@ -2,6 +2,7 @@ package audit
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/elpic/archon/internal/llm"
@@ -82,6 +83,10 @@ func (r *Report) FormatFix() string {
 		if v.File == "" {
 			continue
 		}
+		// Validate file path to prevent path traversal
+		if !isSafePath(v.File) {
+			continue
+		}
 		// Generate a minimal unified diff for the suggestion
 		fmt.Fprintf(&b, "--- a/%s\n", v.File)
 		fmt.Fprintf(&b, "+++ b/%s\n", v.File)
@@ -94,4 +99,25 @@ func (r *Report) FormatFix() string {
 		fmt.Fprintf(&b, "+%s\n", v.Suggestion)
 	}
 	return b.String()
+}
+
+// isSafePath reports whether path is safe to use in a diff.
+// It rejects absolute paths, paths with directory traversal, and empty strings.
+func isSafePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	if filepath.IsAbs(path) {
+		return false
+	}
+	// Check for directory traversal attempts
+	if strings.Contains(path, "..") {
+		return false
+	}
+	// Reject empty or single-dot paths
+	clean := filepath.Clean(path)
+	if clean == "." || clean == "" {
+		return false
+	}
+	return true
 }

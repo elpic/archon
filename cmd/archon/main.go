@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -72,6 +73,22 @@ func runAudit(ctx context.Context, args []string) error {
 	}
 	if *target == "" {
 		return fmt.Errorf("audit: --target must be non-empty")
+	}
+	// Validate target is within current working directory to prevent path traversal
+	absTarget, err := filepath.Abs(*target)
+	if err != nil {
+		return fmt.Errorf("audit: invalid target path: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("audit: failed to get working directory: %w", err)
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return fmt.Errorf("audit: failed to get working directory: %w", err)
+	}
+	if !strings.HasPrefix(absTarget, absCwd) {
+		return fmt.Errorf("audit: target path %q must be within current working directory %q", *target, cwd)
 	}
 
 	resolver, err := newResolver(*fallback)
@@ -258,9 +275,29 @@ func runExplain(ctx context.Context, args []string) error {
 		return fmt.Errorf("explain: missing rule-id argument")
 	}
 	ruleID := fs.Arg(0)
+	// Validate ruleID to prevent injection (alphanumeric, hyphen, underscore only)
+	if !isValidRuleID(ruleID) {
+		return fmt.Errorf("explain: invalid rule-id %q (only alphanumeric, hyphen, underscore allowed)", ruleID)
+	}
 
 	if *target == "" {
 		return fmt.Errorf("explain: --target must be non-empty")
+	}
+	// Validate target is within current working directory to prevent path traversal
+	absTarget, err := filepath.Abs(*target)
+	if err != nil {
+		return fmt.Errorf("explain: invalid target path: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("explain: failed to get working directory: %w", err)
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return fmt.Errorf("explain: failed to get working directory: %w", err)
+	}
+	if !strings.HasPrefix(absTarget, absCwd) {
+		return fmt.Errorf("explain: target path %q must be within current working directory %q", *target, cwd)
 	}
 
 	// Use fallback from env or config for explain (no fallback flag for now)
@@ -310,6 +347,26 @@ func runExplain(ctx context.Context, args []string) error {
 	return nil
 }
 
+// isValidRuleID validates that ruleID contains only alphanumeric, hyphen, or underscore characters.
+func isValidRuleID(ruleID string) bool {
+	if ruleID == "" {
+		return false
+	}
+	for _, r := range ruleID {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// explainRule asks the LLM to explain a rule, provide examples, and suggest a fix.
+func explainRule(ctx context.Context, provider llm.Provider, standardsBody, ruleID string) (reasoning string, examples []string, fixSuggestion string, err error) {
+	// TODO: Implement LLM call for explanation
+	// For now, return placeholder values
+	return "LLM explanation not yet implemented", []string{}, "run `archon audit --fix` to see suggested fixes", nil
+}
+
 // findRuleInStandards extracts the rule text from the standards markdown
 // by looking for a heading that matches the rule ID.
 func findRuleInStandards(body, ruleID string) string {
@@ -339,13 +396,6 @@ func findRuleInStandards(body, ruleID string) string {
 		}
 	}
 	return strings.Join(ruleLines, "\n")
-}
-
-// explainRule asks the LLM to explain a rule, provide examples, and suggest a fix.
-func explainRule(ctx context.Context, provider llm.Provider, standardsBody, ruleID string) (reasoning string, examples []string, fixSuggestion string, err error) {
-	// TODO: Implement LLM call for explanation
-	// For now, return placeholder values
-	return "LLM explanation not yet implemented", []string{}, "run `archon audit --fix` to see suggested fixes", nil
 }
 
 // stubProvider is the placeholder used by runWatch when llm.New
