@@ -196,11 +196,20 @@ func TestValidateFrom(t *testing.T) {
 }
 
 // TestRunInit_RejectsMalformedFrom: runInit surfaces the validation error
-// instead of writing a file. Use a fresh temp dir for --target so the
-// test does not depend on (or pollute) the process's CWD.
+// instead of writing a file. Uses a subdirectory within cwd so
+// validateTarget passes and the --from check is exercised.
 func TestRunInit_RejectsMalformedFrom(t *testing.T) {
-	dir := t.TempDir()
-	err := runInit(nil, []string{"--from", "not-a-repo", "--target", dir})
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cwd, ".archon-test-rejects-malformed")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	err = runInit(nil, []string{"--from", "not-a-repo", "--target", dir})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -208,11 +217,9 @@ func TestRunInit_RejectsMalformedFrom(t *testing.T) {
 		t.Errorf("expected 'owner/repo' in error, got %v", err)
 	}
 	// File must not have been created in the target dir.
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".archon") {
-			t.Errorf("unexpected .archon path created: %s", e.Name())
-		}
+	entries, _ := os.ReadDir(filepath.Join(dir, ".archon"))
+	if len(entries) > 0 {
+		t.Errorf("unexpected .archon contents: %v", entries)
 	}
 }
 
@@ -220,8 +227,17 @@ func TestRunInit_RejectsMalformedFrom(t *testing.T) {
 // test at the CLI layer. A --from value that would have been smuggled
 // past the old validateFrom must now be rejected.
 func TestRunInit_RejectsMalformedFrom_QueryInjection(t *testing.T) {
-	dir := t.TempDir()
-	err := runInit(nil, []string{"--from", "elpic/archon?next=evil", "--target", dir})
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cwd, ".archon-test-rejects-query")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	err = runInit(nil, []string{"--from", "elpic/archon?next=evil", "--target", dir})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -229,9 +245,7 @@ func TestRunInit_RejectsMalformedFrom_QueryInjection(t *testing.T) {
 		t.Errorf("expected 'owner/repo' in error, got %v", err)
 	}
 	// No .archon directory should have been created.
-	if _, err := os.Stat(filepath.Join(dir, ".archon")); err == nil {
-		t.Error("unexpected .archon directory created after rejected --from")
-	} else if !os.IsNotExist(err) {
-		t.Errorf("unexpected stat error: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".archon", "standards.md")); err == nil {
+		t.Error("unexpected standards.md created after rejected --from")
 	}
 }

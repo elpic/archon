@@ -148,6 +148,9 @@ func runWatch(ctx context.Context, args []string) error {
 	if *target == "" {
 		return fmt.Errorf("watch: --target must be non-empty")
 	}
+	if err := validateTarget(*target, "watch"); err != nil {
+		return err
+	}
 
 	resolver, err := newResolver(*fallback)
 	if err != nil {
