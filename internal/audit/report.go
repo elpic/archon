@@ -40,7 +40,18 @@ func (r *Report) Format() string {
 	fmt.Fprintf(&b, "Archon audit: %s\n", r.Target)
 	fmt.Fprintf(&b, "%d violation(s)\n\n", len(r.Violations))
 	for i, v := range r.Violations {
-		fmt.Fprintf(&b, "%d. [%s] %s\n   %s\n", i+1, v.Severity, v.Rule, v.Description)
+		fmt.Fprintf(&b, "%d. %s\n", i+1, v.Description)
+		fmt.Fprintf(&b, "   severity: %s\n", v.Severity)
+		fmt.Fprintf(&b, "   rule: %s\n", v.Rule)
+		if v.File != "" {
+			fmt.Fprintf(&b, "   file: %s\n", v.File)
+		}
+		if v.Line > 0 {
+			fmt.Fprintf(&b, "   line: %d\n", v.Line)
+		}
+		if v.Suggestion != "" {
+			fmt.Fprintf(&b, "   suggestion: %s\n", v.Suggestion)
+		}
 	}
 	return b.String()
 }

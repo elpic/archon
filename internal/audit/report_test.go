@@ -356,3 +356,76 @@ func TestFormatFix_ZeroLine(t *testing.T) {
 		t.Errorf("expected '@@ -0,0 +1,1 @@' fallback for zero line, got: %q", got)
 	}
 }
+
+// TestReport_Format_StructuredMetadata verifies that Format puts
+// severity, rule, file, and line on their own lines instead of
+// embedding them in the description text.
+func TestReport_Format_StructuredMetadata(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:        "no-comments",
+				Description: "Comments are forbidden",
+				Severity:    llm.SeverityError,
+				File:        "internal/foo/foo.go",
+				Line:        42,
+				Suggestion:  "remove the comment",
+			},
+		},
+	}
+	got := r.Format()
+
+	// Description appears first after the number
+	if !strings.Contains(got, "1. Comments are forbidden") {
+		t.Errorf("expected '1. Comments are forbidden' in output, got: %q", got)
+	}
+	// Metadata on separate lines
+	if !strings.Contains(got, "   severity: error") {
+		t.Errorf("expected '   severity: error' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "   rule: no-comments") {
+		t.Errorf("expected '   rule: no-comments' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "   file: internal/foo/foo.go") {
+		t.Errorf("expected '   file: internal/foo/foo.go' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "   line: 42") {
+		t.Errorf("expected '   line: 42' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "   suggestion: remove the comment") {
+		t.Errorf("expected '   suggestion: remove the comment' in output, got: %q", got)
+	}
+	// Old format must NOT appear
+	if strings.Contains(got, "[error]") {
+		t.Errorf("old '[severity]' inline format should not appear, got: %q", got)
+	}
+}
+
+// TestReport_Format_StructuredMetadata_Minimal verifies that
+// fields with zero values are omitted from the structured output.
+func TestReport_Format_StructuredMetadata_Minimal(t *testing.T) {
+	r := &Report{
+		Target: "./...",
+		Violations: []llm.Violation{
+			{
+				Rule:        "r1",
+				Description: "d1",
+				Severity:    llm.SeverityWarn,
+			},
+		},
+	}
+	got := r.Format()
+	if !strings.Contains(got, "   severity: warn") {
+		t.Errorf("expected '   severity: warn' in output, got: %q", got)
+	}
+	if strings.Contains(got, "   file:") {
+		t.Errorf("file line should not appear when File is empty, got: %q", got)
+	}
+	if strings.Contains(got, "   line:") {
+		t.Errorf("line line should not appear when Line is 0, got: %q", got)
+	}
+	if strings.Contains(got, "   suggestion:") {
+		t.Errorf("suggestion line should not appear when Suggestion is empty, got: %q", got)
+	}
+}
