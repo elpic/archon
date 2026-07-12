@@ -1,10 +1,12 @@
 ---
 title: "File Checker — Existence and Content Checks"
-status: pending
+status: done
 priority: high
 sprint: 1
 labels: [feature, rules]
 created: "2026-07-12"
+completed: "2026-07-12"
+pr: "https://github.com/elpic/archon/pull/9"
 ---
 
 # File Checker — Existence and Content Checks
@@ -19,11 +21,11 @@ but structural checks.
 
 ## Acceptance criteria
 
-- [ ] `FileChecker` implements Checker — checks file existence/content
-- [ ] Parses `File: <glob>` lines from rule markdown (file must exist)
-- [ ] Parses `NoFile: <glob>` lines from rule markdown (file must NOT exist)
-- [ ] Parses `Content: <glob> contains <pattern>` for basic content checks
-- [ ] Returns violations with file path and reason
+- [x] `FileChecker` implements DirectoryChecker — checks file existence/content
+- [x] Parses `File: <glob>` lines from rule markdown (file must exist)
+- [x] Parses `NoFile: <glob>` lines from rule markdown (file must NOT exist)
+- [x] Parses `Content: <glob> contains <pattern>` for basic content checks
+- [x] Returns violations with file path and reason
 
 ## Technical notes
 
