@@ -151,14 +151,15 @@ the why.
 ## Key design decisions
 
 1. **Single static binary, one external dep.** `github.com/fsnotify/fsnotify` is the only non-stdlib dep, added because file-watching has no stdlib equivalent. Everything else (HTTP, CLI, config) remains stdlib.
-2. **Markdown standards, LLM as judge.** No rule schema; the model interprets the document. This collapses what might have been a rule engine into a single LLM call.
-3. **Four-tier resolution, locked-in order.** `project > org-header > auto-infer > fallback`. The `Resolver` API bakes in that order; replacing it would mean rewriting callers. Tier 3 is intentionally best-effort — a missing auto-infer target is a non-event, not an error.
-4. **Violations carry source coordinates.** `Violation.File`, `Violation.Line`, `Violation.Column` are zero-valued when the provider can't locate the code; `String()` renders them as `?` for editor problem-matcher compatibility.
-5. **Watch is plumbing-only until the LLM client lands.** The watch loop logs the LLM stub error on every change and continues. The loop is end-to-end real (fsnotify, debounce, classify, dispatch, format) so the moment the LLM client ships, `archon watch` produces real diagnostics with no further plumbing changes.
-6. **Context with signal handling in main.** `signal.NotifyContext` propagates cancellation to the runner and provider; the watch loop's `ctx.Done()` triggers an `fsnotify.Watcher.Close()` and the loop returns.
-7. **Blueprint-managed CI + drift-check.** `setup.bp` renders the GitHub Actions matrix; `elpic/actions/github/drift-check@v2` is the only guard against hand-edits.
-8. **mise tasks as the CI interface.** CI calls `mise run test:coverage`, `lint`, `build`, `security`, `test:integration` — not raw `go test`.
-9. **Trunk-based git, documented not enforced.** No branch-protection automation; relies on convention.
+2. **Deterministic rule engine, markdown-based rules.** No LLM dependency for core audit. Rules are markdown files with YAML frontmatter, organized in folders by category. The engine uses pattern matching and Go AST analysis to find violations deterministically.
+3. **LLM as optional enhancement.** The LLM provider exists for `archon explain` (reasoning, examples) but is not required for `archon audit`. The core loop is deterministic.
+4. **Four-tier resolution, locked-in order.** `project > org-header > auto-infer > fallback`. The `Resolver` API bakes in that order; replacing it would mean rewriting callers. Tier 3 is intentionally best-effort — a missing auto-infer target is a non-event, not an error.
+5. **Violations carry source coordinates.** `Violation.File`, `Violation.Line`, `Violation.Column` are zero-valued when the provider can't locate the code; `String()` renders them as `?` for editor problem-matcher compatibility.
+6. **Watch is plumbing-only until the LLM client lands.** The watch loop logs the LLM stub error on every change and continues. The loop is end-to-end real (fsnotify, debounce, classify, dispatch, format) so the moment the LLM client ships, `archon watch` produces real diagnostics with no further plumbing changes.
+7. **Context with signal handling in main.** `signal.NotifyContext` propagates cancellation to the runner and provider; the watch loop's `ctx.Done()` triggers an `fsnotify.Watcher.Close()` and the loop returns.
+8. **Blueprint-managed CI + drift-check.** `setup.bp` renders the GitHub Actions matrix; `elpic/actions/github/drift-check@v2` is the only guard against hand-edits.
+9. **mise tasks as the CI interface.** CI calls `mise run test:coverage`, `lint`, `build`, `security`, `test:integration` — not raw `go test`.
+10. **Trunk-based git, documented not enforced.** No branch-protection automation; relies on convention.
 
 ## Locked-in interfaces
 
@@ -210,15 +211,15 @@ type Event struct {
 
 ## What's missing / incomplete
 
-- `llm.New()` returns `"llm.New not yet implemented"` — the entire AI half is a stub. The watch loop is plumbing-only and surfaces the stub error on every change; this is the expected demo.
-- `internal/rules/` is empty; the rules/standards split is an unresolved architectural call.
-- Report is terminal-only: no JSON, no SARIF, no exit code (problem-matcher text is the only structured stream today).
-- The LLM does not yet return `File`/`Line`/`Column` because the provider is a stub; the `Violation` fields and `FormatDiagnostic` are ready for the real provider.
+- `internal/rules/` is empty — this is now the **core** package (ticket #010)
+- Rule engine needs: markdown parser, frontmatter extraction, pattern matchers, Go AST analysis
+- No `.rules/` directory structure yet (categories, rule files)
+- LLM provider exists but is optional (for `archon explain` only)
+- Report is terminal-only: no JSON, no SARIF, no exit code (problem-matcher text is the only structured stream today)
 - Docs disagree: `AGENTS.md` says Go 1.23+ but `go.mod` is 1.25; README/AGENTS.md/`.archon/standards.md` disagree on the default LLM provider and the org standards path.
 - `go.sum` exists now (one external dep, fsnotify); govulncheck is no longer a no-op.
 - Dogfooding is partial: `archon init`, the resolver, and `archon watch` work end-to-end, but `archon audit` and `archon watch`'s audit call still halt at the LLM stub.
 
 The skeleton is now mostly fleshed out for the standards half AND the
-inner loop. The remaining work is the LLM client (one HTTP client +
-a Provider impl) and a decision on whether `internal/rules/`
-survives.
+inner loop. The remaining work is the rule engine (ticket #010) and
+migrating from LLM-based audit to deterministic rules.
